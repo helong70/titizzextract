@@ -337,6 +337,14 @@ def create_ti_icon():
     """
     创建一个带有 Ti 字母的粉色图标
     """
+    icon_path = "titizz_icon.ico"
+    
+    # 检查是否已经存在合适的图标文件
+    if os.path.exists(icon_path) and os.path.getsize(icon_path) > 300:
+        file_size = os.path.getsize(icon_path)
+        print(f"✅ 使用已有图标: {icon_path} ({file_size} bytes)")
+        return icon_path
+    
     try:
         from PIL import Image, ImageDraw, ImageFont
         
@@ -405,7 +413,6 @@ def create_ti_icon():
             images.append(img)
         
         # 保存为 ICO 文件，包含多个尺寸
-        icon_path = "titizz_icon.ico"
         images[0].save(
             icon_path, 
             format='ICO', 
@@ -413,8 +420,8 @@ def create_ti_icon():
             append_images=images[1:]
         )
         
-        # 检查文件是否成功创建且大小合理
-        if os.path.exists(icon_path) and os.path.getsize(icon_path) > 1000:
+        # 检查文件是否成功创建且大小合理（降低要求到300字节）
+        if os.path.exists(icon_path) and os.path.getsize(icon_path) > 300:
             print(f"✅ 图标创建成功: {icon_path} ({os.path.getsize(icon_path)} bytes)")
             return icon_path
         else:
@@ -493,7 +500,7 @@ def create_simple_icon():
         with open(icon_path, 'wb') as f:
             f.write(icon_data)
         
-        if os.path.exists(icon_path) and os.path.getsize(icon_path) > 100:
+        if os.path.exists(icon_path) and os.path.getsize(icon_path) > 200:
             print(f"✅ 简单图标创建成功: {icon_path} ({os.path.getsize(icon_path)} bytes)")
             return icon_path
         else:

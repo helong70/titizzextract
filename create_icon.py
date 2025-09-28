@@ -50,17 +50,43 @@ def create_ti_icon():
     # 绘制文字 "Ti"
     text = "Ti"
     
-    # 获取文字尺寸
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    # 计算居中位置
-    x = (size - text_width) // 2
-    y = (size - text_height) // 2 - 2  # 稍微向上偏移
-    
-    # 绘制文字
-    draw.text((x, y), text, font=font, fill=white)
+    # 尝试使用 anchor='mm' 直接居中（Pillow 支持）
+    cx, cy = size // 2, size // 2
+    try:
+        draw.text((cx, cy), text, font=font, fill=white, anchor='mm')
+    except TypeError:
+        # 若 Pillow 版本不支持 anchor 参数，回退到基于字体度量的计算
+        try:
+            ascent, descent = font.getmetrics()
+            # 有些字体的 bbox 更准确
+            try:
+                bbox = font.getmask(text).getbbox()
+                if bbox:
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
+                else:
+                    text_width, text_height = draw.textsize(text, font=font)
+            except Exception:
+                text_width, text_height = draw.textsize(text, font=font)
+
+            # 垂直使用 ascent/descent 更精确
+            total_height = ascent + descent if (ascent + descent) > 0 else text_height
+            x = (size - text_width) // 2
+            y = (size - total_height) // 2
+        except Exception:
+            # 最后回退（与之前相同）
+            try:
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                x = (size - text_width) // 2
+                y = (size - text_height) // 2 - 2
+            except Exception:
+                text_width, text_height = draw.textsize(text, font=font)
+                x = (size - text_width) // 2
+                y = (size - text_height) // 2 - 2
+
+        draw.text((x, y), text, font=font, fill=white)
     
     return img
 

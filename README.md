@@ -1,3 +1,24 @@
+# Titizz — 批量解压工具
+
+这是一个面向 Windows 的小工具，用来批量解压 7z / 7zz 压缩包、收集图片并清理临时文件。项目包含一个图形化（PyQt）进度窗口以及控制台运行模式，支持打包为单个可执行文件并集成到资源管理器右键菜单。
+## 主要特性
+- 支持 `.7z` 和 `.7zz` 压缩包（默认密码：`momo.moe`）
+- 自动将图片收集到 `all_images` 目录
+- 自动清理中间解压目录
+- 可选择 GUI（默认）或控制台运行（`--console`）
+- 可打包为单文件 exe 并生成右键菜单注册表文件
+---
+
+## 快速开始（开发者）
+
+1) 激活虚拟环境（PowerShell）
+
+```powershell
+. .\.venv\Scripts\Activate.ps1
+
+2) 安装（可选）依赖（如果需要在开发环境运行 GUI / 生成图标）：
+
+```powershell
 # 批量解压工具使用说明
 
 ## 🔧 开发与构建
@@ -7,7 +28,111 @@
 - Windows 系统（用于生成注册表文件）
 
 ### 项目结构
+# 在 venv 中
+pip install PyQt5 Pillow pyinstaller
 ```
+3) 运行主脚本（默认 GUI）
+
+```powershell
+python titizz_extract.py <目标目录>
+```
+# 或不传目录则使用当前目录
+python titizz_extract.py
+
+4) 强制控制台模式（无 GUI）
+
+```powershell
+python titizz_extract.py --console <目标目录>
+```
+5) 打包（如果你需要生成 exe）：
+
+```powershell
+python build_tool.py
+```
+构建脚本会尝试检查虚拟环境、安装 PyInstaller（如缺失）、生成 icon 与使用 PyInstaller 打包。
+
+---
+
+## 使用（最终用户）
+
+安装完毕后，你可以：
+- 双击 `add_context_menu.reg` 将程序注册为资源管理器右键菜单项（请以管理员权限运行注册表导入）。
+- 在目标文件夹右键选择“批量解压7z文件”开始处理。
+
+处理流程简述：程序会解压压缩包、对内部嵌套压缩包做二次解压、把图片移动到 `all_images` 文件夹、然后清理临时目录。
+
+---
+
+## GUI 与控制台行为
+- 默认会使用内建的 PyQt5 进度窗口（若未安装 PyQt5，会回退到控制台输出）。
+- 在 GUI 模式下，进度窗口会在处理完成后自动关闭；控制台模式则会在结尾等待按键（Windows 下为“按任意键退出...”）。
+
+---
+
+## 常见问题（FAQ）
+
+- Q: 右键菜单没有出现？
+   - A: 确认已运行 `add_context_menu.reg`，必要时以管理员身份运行并重启资源管理器。
+
+- Q: 解压失败或报错？
+   - A: 检查压缩包是否损坏、密码是否为 `momo.moe`、磁盘空间和杀毒软件设置。
+
+- Q: GUI 窗口闪烁或出现临时控制台窗口？
+   - A: 打包后请确保 `dist\titizz_extract.exe` 的快捷方式或注册表项直接指向 exe（不要通过 cmd / powershell wrapper）。脚本已尽量使用 Windows 子进程标志隐藏 7z 控制台窗口。
+
+---
+
+## 高级说明（开发者）
+
+- 源码入口：`titizz_extract.py`。
+- 打包配置：`titizz_extract.spec`（如果你需要自定义 PyInstaller 行为可编辑）。
+- 图标生成：项目内含脚本用于生成 multi-size ico（Pillow）。
+
+### 构建：生成不包含 Qt 界面的 exe（仅控制台）
+
+如果你需要构建一个不包含 PyQt GUI 的控制台版 exe（例如减小体积或避免打包 PyQt），有两种常用方式：
+
+- 方法 A — 修改 spec 文件（推荐，可复现）：
+   1. 打开 `titizz_extract.spec`，将 `console=True`（确保是控制台打包），并在 `EXCLUDES` 或 `excludedimports`/`excludes` 中加入 `PyQt5` 和 `qt_progress`（或移除与 PyQt 相关的 hiddenimports）。
+   2. 保存后使用 PyInstaller 读取该 spec：
+
+```powershell
+pyinstaller .\titizz_extract.spec
+```
+
+   这样 PyInstaller 会按 spec 的配置生成一个不包含 Qt 的控制台 exe。
+
+- 方法 B — 直接使用 PyInstaller 命令行（快速）：
+
+   在 PowerShell 中运行下面命令（示例会把 `7z.exe` 嵌入到 exe 同级目录）：
+
+```powershell
+pyinstaller --onefile --noconfirm --console \
+   --name titizz_extract \
+   --add-data "7z.exe;." \
+   --exclude-module PyQt5 \
+   --exclude-module qt_progress \
+   titizz_extract.py
+```
+
+   说明：
+   - `--console` 会生成带控制台的 exe（非 windowed）。
+   - `--exclude-module` 用来避免打包 PyQt5 和本地的 `qt_progress.py`（如果存在）。
+   - 如果你的项目需要额外的数据文件或隐藏导入（hidden-import），请按需添加对应的 `--add-data` / `--hidden-import` 参数。
+
+测试与回退：
+- 构建完成后，在没有安装 PyQt5 的环境中运行生成的 exe，程序应该会自动使用控制台模式（脚本中已实现对 PyQt5 的 try/except 回退）。
+- 如果仍然看到与 Qt 相关的错误，检查是否有其他模块间接引用 PyQt5（使用 `--exclude-module` 排查）。
+
+---
+
+## 贡献与许可
+
+欢迎提交 issue 或 PR。项目用于学习与个人用途，请勿用于商业目的（若需商业许可请联系作者）。
+
+---
+
+构建时间: 2025-09-28
 titizz/
 ├── build_tool.py          # 构建脚本
 ├── titizz_extract.py      # 主程序源码

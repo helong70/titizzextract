@@ -4,22 +4,46 @@ import os
 import subprocess
 import sys
 
+# 可选的 Qt 进度条支持（如果安装了 PyQt5）
+try:
+    from qt_progress import QtProgressApp
+    QT_AVAILABLE = True
+except Exception:
+    QtProgressApp = None
+    QT_AVAILABLE = False
+
 def extract_7z_with_7zexe(file_path, out_dir, password=None):
     # 7z.exe 路径，支持打包后的相对路径
     import sys
+    # 计算基目录：优先使用 _MEIPASS（PyInstaller），其次使用模块 __file__，最后回退到当前工作目录
     if getattr(sys, 'frozen', False):
-        # 打包后的exe环境
         seven_zip = os.path.join(sys._MEIPASS, '7z.exe')
     else:
-        # 开发环境
-        seven_zip = os.path.join(os.path.dirname(__file__), '7z.exe')
+        try:
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+        except NameError:
+            module_dir = os.getcwd()
+        seven_zip = os.path.join(module_dir, '7z.exe')
     cmd = [seven_zip, 'x', file_path, f'-o{out_dir}']
     if password:
         cmd.append(f'-p{password}')
     # 覆盖同名文件
     cmd.append('-y')
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
+        # 在 Windows 上运行外部 7z.exe 时避免弹出额外的控制台窗口
+        if os.name == 'nt':
+            # 使用 CREATE_NO_WINDOW 避免创建新的控制台
+            creationflags = subprocess.CREATE_NO_WINDOW
+            # 也可以设置 STARTUPINFO 以隐藏窗口
+            try:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = subprocess.SW_HIDE
+            except Exception:
+                si = None
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8', creationflags=creationflags, startupinfo=si)
+        else:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
         if result.returncode == 0:
             return True
         else:
@@ -56,8 +80,8 @@ def print_banner():
     """打印漂亮的横幅"""
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
-║                    🎯 Titizz 批量解压工具                      ║
-║                      v1.0.0 - 2025.9.28                     ║
+║                    🎯 Titizz 批量解压工具                     ║
+║                      v1.0.0 - 2025.9.28                      ║
 ╚══════════════════════════════════════════════════════════════╝
     """
     print(banner)
@@ -76,52 +100,162 @@ def print_progress_bar(current, total, length=50):
 
 def run_with_console_progress():
     """使用控制台进度条模式运行"""
-    if len(sys.argv) > 1:
-        root_dir = sys.argv[1]
-    else:
+    # 默认启用 GUI（如果安装了 PyQt5），除非显式传入 --console
+    use_gui = ('--console' not in sys.argv)
+
+    # 解析目标目录（第一个非选项参数）
+    root_dir = None
+    for a in sys.argv[1:]:
+        if a.startswith('-'):
+            continue
+        root_dir = a
+        break
+    if not root_dir:
         root_dir = os.getcwd()
     
     password = "momo.moe"
     
-    # 清屏并显示横幅
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print_banner()
+    # 在控制台模式下清屏并显示横幅；GUI 模式不清屏以避免创建临时控制台窗口
+    if not use_gui:
+        try:
+            os.system('cls' if os.name == 'nt' else 'clear')
+        except Exception:
+            pass
+        print_banner()
+        print(f"📁 目标目录: {root_dir}")
+        print(f"🔑 解压密码: {password}")
+        print("═" * 65)
     
-    print(f"📁 目标目录: {root_dir}")
-    print(f"🔑 解压密码: {password}")
-    print("═" * 65)
-    
-    # 设置全局变量为None，使用控制台输出
+    # 设置全局变量为None（可能会被 batch_extract_console 覆盖为 QtProgressApp 实例）
     global progress_window
     progress_window = None
     
-    batch_extract_console(root_dir, password)
+    # 如果要求 GUI 并且可用：在主线程运行 Qt 事件循环，处理放后台线程
+    if use_gui and QT_AVAILABLE:
+        from threading import Thread
+        import time
+
+        # 共享状态，以线程安全的方式在 worker 和主线程之间通信
+        global progress_state
+        progress_state = {'value': 0, 'total': 1, 'text': '', 'done': False}
+
+        import importlib, time
+        # 预热 PyQt 子模块，尽量把导入开销放到现在（在创建 QApplication 之前）
+        try:
+            importlib.import_module('PyQt5.QtCore')
+            importlib.import_module('PyQt5.QtGui')
+            importlib.import_module('PyQt5.QtWidgets')
+        except Exception:
+            pass
+
+        # 预先创建 QApplication（和一个最小窗口）以缩短后续显示延迟，并记录耗时
+        t0 = time.time()
+        # create_app=True 会创建 QApplication 和窗口；我们先创建一个最小的窗口
+        qt_app = QtProgressApp(total=1, create_app=True, compact=True, auto_close=False)
+        t1 = time.time()
+        print(f"⏱️ Qt init time: {(t1-t0)*1000:.0f} ms")
+
+        # 启动后台工作线程，传入 None 为 qt_app（worker 不直接操作 GUI）
+        worker = Thread(target=batch_extract_console, args=(root_dir, password, True, None), daemon=True)
+        worker.start()
+
+        # 主线程轮询共享状态并更新 GUI（主线程安全）
+        try:
+            # 等待 worker 初始化 total
+            import importlib
+            # 等待 worker 初始化 total
+            while not progress_state.get('total', 1):
+                QtWidgets = importlib.import_module('PyQt5.QtWidgets')
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.01)
+
+            total = max(1, progress_state.get('total', 1))
+            # 更新进度条范围并启用 auto_close（完成时自动关闭并退出事件循环）
+            try:
+                qt_app.win.bar.setRange(0, total)
+                qt_app.total = total
+                qt_app.auto_close = True
+            except Exception:
+                pass
+            qt_app.start()
+            last_total = qt_app.total
+
+            while worker.is_alive():
+                val = progress_state.get('value', 0)
+                txt = progress_state.get('text', '')
+                try:
+                    qt_app.set_value(val, txt)
+                except Exception:
+                    pass
+                # 动态检测 total 变化（例如清理阶段把额外项加入 total），并更新进度条范围
+                try:
+                    current_total = progress_state.get('total', last_total)
+                    if current_total != last_total:
+                        qt_app.win.bar.setRange(0, max(1, current_total))
+                        qt_app.total = current_total
+                        last_total = current_total
+                except Exception:
+                    pass
+                import importlib
+                QtWidgets = importlib.import_module('PyQt5.QtWidgets')
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.05)
+
+            # 最终刷新一次，确保进度达到 total 以触发 auto_close
+            try:
+                qt_app.set_value(progress_state.get('value', 0), progress_state.get('text', ''))
+                # 确保到达 total
+                qt_app.set_value(total, f"{total}/{total} 完成")
+            except Exception:
+                pass
+
+        finally:
+            # 关闭窗口并退出应用（如果还在运行）
+            try:
+                if qt_app:
+                    try:
+                        qt_app.close()
+                    except Exception:
+                        pass
+                app = __import__('PyQt5.QtWidgets').QApplication.instance()
+                if app:
+                    try:
+                        app.quit()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        # 等待 worker 结束（已经结束时瞬间返回）
+        worker.join()
+    else:
+        batch_extract_console(root_dir, password, use_gui=use_gui)
     
     print("\n" + "=" * 60)
     print("✨ 处理完成！")
     print("=" * 60)
     
-    # 退出处理
-    try:
-        if os.name == 'nt':  # Windows
-            print("\n按任意键退出...")
-            import msvcrt
-            msvcrt.getch()
-        else:  # Linux/Mac
-            input("\n按任意键退出...")
-    except ImportError:
+    # 仅在控制台模式下等待用户按键，GUI 模式直接退出避免弹出临时控制台窗口
+    if not use_gui:
         try:
-            input("\n按任意键退出...")
+            if os.name == 'nt':  # Windows
+                print("\n按任意键退出...")
+                import msvcrt
+                msvcrt.getch()
+            else:  # Linux/Mac
+                input("\n按任意键退出...")
+        except ImportError:
+            try:
+                input("\n按任意键退出...")
+            except (KeyboardInterrupt, EOFError):
+                pass
         except (KeyboardInterrupt, EOFError):
             pass
-    except (KeyboardInterrupt, EOFError):
-        pass
-    except Exception:
-        import time
-        print("\n程序将在 3 秒后退出...")
-        time.sleep(3)
+        except Exception:
+            import time
+            print("\n程序将在 3 秒后退出...")
+            time.sleep(3)
 
-def batch_extract_console(root_dir, password):
+def batch_extract_console(root_dir, password, use_gui=False, qt_app=None):
     """控制台模式的批量解压函数"""
     # 统计需要处理的文件
     files_to_process = []
@@ -150,6 +284,15 @@ def batch_extract_console(root_dir, password):
     
     to_delete = []
     processed = 0
+
+    # 启动 Qt 进度窗口（如果请求并且可用）
+    created_qt_app = False
+    global progress_state
+    if use_gui:
+        # 初始化进度状态，主线程会轮询它以显示 GUI
+        progress_state = {'value': 0, 'total': max(1, total_files), 'text': '', 'done': False}
+        if not QT_AVAILABLE:
+            print("⚠️ 未安装或无法使用 PyQt5，回退到控制台进度")
     
     for file_path, filename in files_to_process:
         processed += 1
@@ -158,6 +301,8 @@ def batch_extract_console(root_dir, password):
         progress_bar = print_progress_bar(processed, total_files)
         print(f"\n{progress_bar}")
         print(f"🔄 正在处理: {filename}")
+        # 注意：不要在处理开始前就增加 progress_state['value']，
+        # 否则 GUI 可能在后台工作完成前就显示为 100%
         
         out_dir = file_path + '_extracted'
         
@@ -182,25 +327,68 @@ def batch_extract_console(root_dir, password):
                 to_delete.append(out_dir)
             except Exception as e:
                 print(f"  ⚠️ 处理子文件时出错: {e}")
+        # 每个文件的所有处理完成后，再更新共享进度状态（主线程会根据此更新 GUI）
+        try:
+            if use_gui:
+                progress_state['value'] = processed
+                progress_state['text'] = f"{processed}/{total_files} {filename}"
+        except Exception:
+            pass
     
     # 清理临时文件夹
     # 清理阶段
     print(f"\n🗑️ 开始清理 {len(to_delete)} 个临时文件夹...")
     cleaned = 0
+    # 在进入清理前，把总量扩展为: 已处理文件 + 清理项
+    try:
+        if use_gui:
+            cleanup_total = len(to_delete)
+            # 新的总量为原文件数 + 清理项数
+            new_total = max(1, total_files + cleanup_total)
+            progress_state['total'] = new_total
+            # 保证当前 value 是已处理文件数
+            progress_state['value'] = processed
+            progress_state['text'] = f"清理 0/{cleanup_total}" if cleanup_total else progress_state.get('text', '')
+    except Exception:
+        pass
+
     for i, d in enumerate(to_delete, 1):
         try:
-            # 显示清理进度
+            # 显示清理进度（控制台视觉）
             clean_progress = print_progress_bar(i, len(to_delete), 30)
             print(f"\r{clean_progress} 清理中...", end="", flush=True)
             
             force_remove_directory(d)
             cleaned += 1
+            # 更新 GUI 进度（已完成的文件数 + 已清理的目录数）
+            try:
+                if use_gui:
+                    progress_state['value'] = processed + i
+                    progress_state['text'] = f"清理 {i}/{len(to_delete)}"
+            except Exception:
+                pass
         except Exception as e:
             print(f"\n  ❌ 清理失败: {os.path.basename(d)}, 错误: {e}")
     
     print(f"\n\n{'='*65}")
     print("🎉 处理完成！")
     print("═" * 65)
+
+    # 处理完成后，如果我们在此函数内创建了 qt_app，退出事件循环
+    if use_gui and QT_AVAILABLE and created_qt_app and qt_app:
+        try:
+            # 关闭窗口并退出 Qt loop
+            qt_app.win.close()
+            # 如果 QApplication 有 exec_ 在运行，退出
+            try:
+                QtWidgets = __import__('PyQt5.QtWidgets')
+                app = QtWidgets.QApplication.instance()
+                if app:
+                    app.quit()
+            except Exception:
+                pass
+        except Exception:
+            pass
     print(f"📊 统计信息:")
     print(f"  ├─ 📁 处理文件: {processed} 个")
     print(f"  ├─ 🗑️ 清理文件夹: {cleaned} 个") 
