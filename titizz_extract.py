@@ -257,17 +257,24 @@ def run_with_console_progress():
 
 def batch_extract_console(root_dir, password, use_gui=False, qt_app=None):
     """控制台模式的批量解压函数"""
-    # 统计需要处理的文件
+    # 统计需要处理的文件（仅根目录，不遍历子目录）
     files_to_process = []
-    for foldername, subfolders, filenames in os.walk(root_dir):
-        if '.venv' in foldername or 'all_images' in foldername:
-            continue
-            
-        for filename in filenames:
-            file_path = os.path.join(foldername, filename)
+    root_dir_abs = os.path.abspath(root_dir)
+    try:
+        for filename in os.listdir(root_dir_abs):
+            file_path = os.path.join(root_dir_abs, filename)
+            # 仅处理根目录下的普通文件
+            if not os.path.isfile(file_path):
+                continue
+            # 跳过不应处理的目录或其内容（防护）
+            if '.venv' in file_path or 'all_images' in file_path:
+                continue
             name, ext = os.path.splitext(filename)
-            if ext == '' and filename.startswith('NO') and foldername == root_dir:
+            if ext == '' and filename.startswith('NO'):
                 files_to_process.append((file_path, filename))
+    except FileNotFoundError:
+        print(f"❌ 目录不存在: {root_dir}")
+        return
     
     total_files = len(files_to_process)
     print(f"\n📋 发现 {total_files} 个需要处理的文件")
