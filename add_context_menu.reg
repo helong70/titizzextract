@@ -1,8 +1,0 @@
-Windows Registry Editor Version 5.00
-
-[HKEY_CLASSES_ROOT\Directory\Background\shell\TitizzExtract]
-@="titizz一键提取"
-"Icon"="D:\\Code WorkSpace\\titizz\\titizz_icon.ico"
-
-[HKEY_CLASSES_ROOT\Directory\Background\shell\TitizzExtract\command]
-@="\"D:\\Code WorkSpace\\titizz\\dist\\titizz_extract.exe\" \"%V\""
