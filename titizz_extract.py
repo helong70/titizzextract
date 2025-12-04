@@ -403,28 +403,80 @@ def batch_extract_console(root_dir, password, use_gui=False, qt_app=None):
     print("═" * 65)
 
 def move_images_console(src_dir, dest_dir):
-    """控制台模式的图片移动函数"""
+    """控制台模式的图片移动函数：不再仅在包含图片时移动文件夹，而是把 src_dir 下的所有内容都转移到 dest_dir。"""
     import shutil
-    
+
     moved_count = 0
+    # 确保目标目录存在
+    if not os.path.exists(dest_dir):
+        os.makedirs(dest_dir)
+
     for item in os.listdir(src_dir):
         item_path = os.path.join(src_dir, item)
+        # 目录：无论是否包含图片都要移动（如果目标已存在则合并）
         if os.path.isdir(item_path):
-            # 检查文件夹是否包含图片
-            imgs = [f for f in os.listdir(item_path) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif'))]
-            if imgs:
-                new_folder = os.path.join(dest_dir, os.path.basename(item_path))
+            new_folder = os.path.join(dest_dir, os.path.basename(item_path))
+            try:
                 if not os.path.exists(new_folder):
                     shutil.move(item_path, new_folder)
-                    moved_count += 1
-                    print(f"    📁 收集文件夹: {os.path.basename(item_path)} ({len(imgs)} 张图片)")
-        elif item.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
-            try:
-                shutil.move(item_path, os.path.join(dest_dir, item))
+                else:
+                    # 目标已存在，移动子项到目标目录以实现合并
+                    for child in os.listdir(item_path):
+                        child_src = os.path.join(item_path, child)
+                        child_dst = os.path.join(new_folder, child)
+                        # 如果目标子项已存在，给文件/文件夹改名避免覆盖
+                        if os.path.exists(child_dst):
+                            base, ext = os.path.splitext(child)
+                            i = 1
+                            new_name = f"{base}_{i}{ext}"
+                            while os.path.exists(os.path.join(new_folder, new_name)):
+                                i += 1
+                                new_name = f"{base}_{i}{ext}"
+                            child_dst = os.path.join(new_folder, new_name)
+                        shutil.move(child_src, child_dst)
+                    # 尝试删除已空的原目录
+                    try:
+                        os.rmdir(item_path)
+                    except Exception:
+                        # 如果无法删除（可能包含锁定文件），使用强制删除
+                        try:
+                            force_remove_directory(item_path)
+                        except Exception:
+                            pass
                 moved_count += 1
-                print(f"    🖼️ 收集图片: {item}")
+                # 统计并打印图片数量（如果有）或打印已转移信息
+                try:
+                    imgs = [f for f in os.listdir(new_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif'))]
+                    if imgs:
+                        print(f"    📁 收集文件夹: {os.path.basename(new_folder)} ({len(imgs)} 张图片)")
+                    else:
+                        print(f"    📁 收集文件夹: {os.path.basename(new_folder)} (无图片，已转移)")
+                except Exception:
+                    print(f"    📁 收集文件夹: {os.path.basename(new_folder)} (已转移)")
             except Exception as e:
                 print(f"    ⚠️ 移动失败: {item}, 错误: {e}")
+        else:
+            # 文件：无论是否为图片都移动到目标目录，遇到重名则加后缀避免覆盖
+            try:
+                target = os.path.join(dest_dir, item)
+                if os.path.exists(target):
+                    base, ext = os.path.splitext(item)
+                    i = 1
+                    new_name = f"{base}_{i}{ext}"
+                    while os.path.exists(os.path.join(dest_dir, new_name)):
+                        i += 1
+                        new_name = f"{base}_{i}{ext}"
+                    target = os.path.join(dest_dir, new_name)
+                shutil.move(item_path, target)
+                moved_count += 1
+                if item.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
+                    print(f"    🖼️ 收集图片: {os.path.basename(target)}")
+                else:
+                    print(f"    📄 收集文件: {os.path.basename(target)} (非图片)")
+            except Exception as e:
+                print(f"    ⚠️ 移动失败: {item}, 错误: {e}")
+
+    return moved_count
 
 if __name__ == "__main__":
     run_with_console_progress()
