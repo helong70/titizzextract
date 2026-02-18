@@ -487,9 +487,36 @@ def move_images_console(src_dir, dest_dir, collect_logs=False):
                 continue
             new_folder = os.path.join(dest_dir, os.path.basename(item_path))
             try:
+                def dir_content_equal(dir1, dir2):
+                    # 递归判断两个文件夹内容是否完全一致
+                    import filecmp
+                    cmp = filecmp.dircmp(dir1, dir2)
+                    if cmp.left_only or cmp.right_only or cmp.funny_files:
+                        return False
+                    for fname in cmp.common_files:
+                        f1 = os.path.join(dir1, fname)
+                        f2 = os.path.join(dir2, fname)
+                        try:
+                            with open(f1, 'rb') as ff1, open(f2, 'rb') as ff2:
+                                if ff1.read() != ff2.read():
+                                    return False
+                        except Exception:
+                            return False
+                    for subdir in cmp.common_dirs:
+                        if not dir_content_equal(os.path.join(dir1, subdir), os.path.join(dir2, subdir)):
+                            return False
+                    return True
+
                 if not os.path.exists(new_folder):
                     shutil.move(item_path, new_folder)
                 else:
+                    # 如果两个文件夹内容完全一致，跳过整个移动
+                    if dir_content_equal(item_path, new_folder):
+                        try:
+                            force_remove_directory(item_path)
+                        except Exception:
+                            pass
+                        continue
                     # 目标已存在，移动子项到目标目录以实现合并
                     for child in os.listdir(item_path):
                         child_src = os.path.join(item_path, child)
@@ -497,13 +524,19 @@ def move_images_console(src_dir, dest_dir, collect_logs=False):
                         # 如果目标子项已存在，判断内容是否一致
                         if os.path.exists(child_dst):
                             try:
-                                # 只对文件做内容比对，文件夹直接重命名
+                                # 只对文件做内容比对，文件夹递归比对
                                 if os.path.isfile(child_src) and os.path.isfile(child_dst):
                                     with open(child_src, 'rb') as f1, open(child_dst, 'rb') as f2:
                                         if f1.read() == f2.read():
-                                            # 内容完全一致，跳过移动
                                             continue
-                                # 内容不同或为文件夹，才重命名
+                                elif os.path.isdir(child_src) and os.path.isdir(child_dst):
+                                    if dir_content_equal(child_src, child_dst):
+                                        try:
+                                            force_remove_directory(child_src)
+                                        except Exception:
+                                            pass
+                                        continue
+                                # 内容不同才重命名
                             except Exception:
                                 pass
                             base, ext = os.path.splitext(child)
