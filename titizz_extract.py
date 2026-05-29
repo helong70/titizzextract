@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from datetime import datetime
 
 # 可选的 Qt 进度条支持（如果安装了 PyQt5）
 try:
@@ -97,6 +98,13 @@ def print_progress_bar(current, total, length=50):
     percentage = progress * 100
     
     return f"[{bar}] {current}/{total} ({percentage:.1f}%)"
+
+def make_timestamped_dir(path):
+    """为新建文件夹添加时间戳后缀。"""
+    parent, base = os.path.split(path)
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    return os.path.join(parent, f"{base}_{timestamp}")
+
 
 def run_with_console_progress():
     """使用控制台进度条模式运行"""
@@ -283,8 +291,8 @@ def batch_extract_console(root_dir, password, use_gui=False, qt_app=None):
         print("❌ 未找到符合条件的文件（根目录下以NO开头的无扩展名文件）")
         return
     
-    # 只有在有文件需要处理时才创建 all_images 目录
-    all_images_dir = os.path.join(root_dir, 'all_images')
+    # 只有在有文件需要处理时才创建 all_images 目录，并在目录名后追加时间戳
+    all_images_dir = make_timestamped_dir(os.path.join(root_dir, 'all_images'))
     if not os.path.exists(all_images_dir):
         os.makedirs(all_images_dir)
         print(f"📁 创建图片收集目录: {all_images_dir}")
